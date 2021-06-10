@@ -1,19 +1,45 @@
+/**
+ * 
+ * 
+ * 
+ * Producers-Consumers Modelisation by Fair-Threads API.
+ * 
+ * Amine Benslimane,
+ * Master 1 STL,
+ * Sorbonne-Université.
+ * 
+ * May 2021
+ * 
+*/
+
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
-#include <string.h>
 #include <sched.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <string.h>
 #include "ft_v1.0/src/fthread.h"
 
-#define NBPROD 2
+
+// *****************   Configuration *******************
+
+#define NBPROD 3
 #define NBCONS 2
-#define MSG 2
+#define MSG 3
 #define TARGET_PRODUCTION 3
 #define TAILLE_MAX 5
 #define ISCONS 0
 #define ISPROD 1
+
+
+
+// ******************  DATA STRUCTURE **************************
+
+
+int cp = NBPROD * TARGET_PRODUCTION;
 
 
 
@@ -32,30 +58,30 @@ struct Tapis
     int nbrElement;
 };
 
-typedef struct _ProdArgs
+typedef struct _Prod
 {
     int cibleProd;
     char nom[100];
     Tapis *tapis;
     FILE* prodLog;
-} ProdArgs;
+} Prod;
 
-typedef struct ConsoArgs
+typedef struct Cons
 {
     int id;
     Tapis *tapis;
     FILE *ConsoLog;
-} ConsoArgs;
+} Cons;
 
-typedef struct MessArgs
+typedef struct Msg
 {
-    ft_scheduler_t tcons_sched;
-    ft_scheduler_t tprod_sched;
-    Tapis *tapisC;
-    Tapis *tapisP;
+    ft_scheduler_t consSched;
+    ft_scheduler_t prodSched;
+    Tapis *tapisCons;
+    Tapis *tapisProd;
     int id;
-    FILE* MessLog;
-} MessArgs;
+    FILE* msgLog;
+} Msg;
 
 
 ft_event_t prodNotEmpty;
@@ -69,41 +95,38 @@ static int id = 0;
 
 
 
-bool decremente(int *cpt)
+// ************************    FUNCTIONS *******************************
+
+bool decrementer(int *cpt)
 {
-    if (*cpt > 0)
-    {
-        (*cpt)--;
+    if ((*cpt > 0) && (*cpt)-- )
         return true;
-    }
     else
-    {
         return false;
-    }
 }
 
 
 
-void enfiler(Tapis *t, paquet p, int tapis_type)
+void enfiler(Tapis *carpet, paquet packet, int carpetType)
 {
 
-    //si full on attend
-    while (t->cap == t->nbrElement)
+    while (carpet->cap == carpet->nbrElement)
     {
-        if(tapis_type == ISCONS)
+        if(carpetType == ISCONS)
             ft_await(consNotFull);
-        if(tapis_type == ISPROD)
+        if(carpetType == ISPROD)
             ft_await(prodNotFull);
     }
-    if(t->nbrElement + 1 > t->cap)
-        perror("tapis overflow in empiler");
-    //on place le paquet en fin de file
-    t -> file[t -> nbrElement] = p;
-    t->nbrElement++;
-    //on previent que le tapis n'est plus vide
-    if(tapis_type== ISCONS)
+    if(carpet->nbrElement >= carpet->cap)
+        perror("the carpet's size is not sufficient! can't enqueue more ! ");
+
+    //enqueue the packet & send signal !
+    carpet -> file[carpet -> nbrElement] = packet;
+    carpet->nbrElement++;
+
+    if(carpetType== ISCONS)
         ft_broadcast(consNotEmpty);
-    if(tapis_type == ISPROD)
+    if(carpetType == ISPROD)
         ft_broadcast(prodNotEmpty);
     
 }
@@ -111,190 +134,185 @@ void enfiler(Tapis *t, paquet p, int tapis_type)
 
 
 
-paquet defiler(Tapis *t, int tapis_type)
+paquet defiler(Tapis *tapis, int carpetType)
 {
-    //si vide on attend
-    while (t->nbrElement == 0)
+    int i=0;
+
+    //if the carpet is empty, wait
+    while (tapis->nbrElement == 0)
     {   
-        if(tapis_type == ISCONS)
+        if(carpetType == ISCONS)
             ft_await(consNotEmpty);
-        if(tapis_type == ISPROD)
+        if(carpetType == ISPROD)
             ft_await(prodNotEmpty);
     }
-    //recuperation du premier element (headpop)
-    paquet p = t->file[0];
-    //copie et decalage du tapis
-    Tapis * tmp;
-    tmp -> cap = t -> cap;
-    int i;
-    for( i = 0 ; i < (t -> nbrElement) - 1 ; i++ ){  //TODO a voir s'il n'y a qu'un elem
-        tmp -> file[i] = t -> file[i+1];
-    }
-    t = tmp;
-    t->nbrElement--;
-    //on previent que le tapis n'est plus plein
-    if(tapis_type == ISCONS)
-        ft_broadcast(consNotFull);
-    if(tapis_type == ISPROD)
-        ft_broadcast(prodNotFull);
-    return p;
+    //Unqueue the first element of the carpet
+    paquet packet = tapis->file[0];
+    Tapis * t;
+    t -> cap = tapis -> cap;
+
+    for( i = 0 ; i < (tapis -> nbrElement) - 1 ; i++ )
+    t -> file[i] = tapis -> file[i+1];
+
+    tapis->nbrElement--;
+    tapis = t;
+
+    //the carpet can welcome objects, send signal !
+    if(carpetType == ISCONS)
+    ft_broadcast(consNotFull);
+
+    if(carpetType == ISPROD)
+    ft_broadcast(prodNotFull);
+
+    return packet;
 }
 
-int cp = NBPROD * TARGET_PRODUCTION;
 
-//==========Routines=============
 
 void *consommateur(void *args)
 {
-    printf("Debut consommateur\n");
-    ConsoArgs *arg = (ConsoArgs *)args;
-    Tapis *tapis = arg->tapis;
-    FILE* clog = arg ->ConsoLog;
+    Cons *consArg = (Cons *) args;
+    Tapis *tapis = consArg->tapis;
+    FILE* consLog = consArg ->ConsoLog;
     id++;
 
-    while (decremente(&cp))
+    while (decrementer(&cp))
     {   
         paquet p =defiler(tapis, ISCONS);
         printf("C%d mange %s\n", id, p.produit);
-        fputs(p.produit, clog);
+        fputs(p.produit, consLog);
         ft_cooperate();
     }
     ft_broadcast(consFinished);
-    printf("Fin consommateur\n");
 }
 
 
 
 void *producteur(void *args)
 {
-    printf("Debut producteur\n");
-    ProdArgs *arg = (ProdArgs *)args;
-    int cibleProd = arg->cibleProd;
+    Prod *prodArg = (Prod *)args;
+    Tapis *tapis = &prodArg->tapis;
+    FILE* prodLog = prodArg->prodLog; 
+
+    int cibleProd = prodArg->cibleProd;
     char name[100];
-    strcpy(name, arg->nom);
-    Tapis *tapis = &arg->tapis;
-    int cpt = 1;
-    FILE* plog = arg->prodLog; 
+    strcpy(name, prodArg->nom);
+    int cp = 1;
 
-    while (cibleProd != 0)
+    while (cibleProd > 0)
     {
-        char newname[100];
-        char buff[100];
-        strcpy(newname, name);
-        strcat(newname, " ");
-        sprintf(buff, "%d", cpt);
-        strcat(newname, buff);
-        paquet* p = (paquet *) malloc(sizeof(paquet));
-        strcpy(p -> produit,newname);
+        char newName[100];
+        char buffer[100];
+        strcpy(newName, name);
+        strcat(newName, " ");
+        sprintf(buffer, "%d", cp);
+        strcat(newName, buffer);
+        paquet* packet = (paquet *) malloc(sizeof(paquet));
+        strcpy(packet -> produit,newName);
 
-        enfiler(tapis, *p, ISPROD);
-        printf("Producteur: %s\n", newname);
+        enfiler(tapis, *packet, ISPROD);
+        printf("Producteur: %s\n", newName);
 
         cibleProd--;
-        cpt++;
-        fputs(newname, plog);
+        cp++;
+        fputs(newName, prodLog);
         ft_cooperate();
     }
 
-    printf("Fin producteur\n");
 }
 
 
 
 void* messager(void *args){
-    MessArgs* arg = (MessArgs *) args;
-    ft_scheduler_t psched = arg ->tprod_sched;
-    ft_scheduler_t csched = arg ->tcons_sched;
-    Tapis  *tcons = arg ->tapisC;
-    Tapis  *tprod = arg ->tapisP;
-    FILE* mlog = arg ->MessLog;
+    Msg* msgArg = (Msg *) args;
+    ft_scheduler_t prodSched = msgArg ->prodSched;
+    ft_scheduler_t consSched = msgArg ->consSched;
+    Tapis  *tcons = msgArg ->tapisCons;
+    Tapis  *tprod = msgArg ->tapisProd;
+    FILE* mlog = msgArg ->msgLog;
 
     while(cp > 0){
-        ft_thread_link(psched);
-        paquet p = defiler(tprod,ISPROD);
+        ft_thread_link(prodSched);
+        paquet packet = defiler(tprod,ISPROD);
         ft_thread_unlink();
-        fputs(p.produit,mlog);
-        ft_thread_link(csched);
-        enfiler(tprod, p, ISCONS);
+        fputs(packet.produit,mlog);
+        ft_thread_link(consSched);
+        enfiler(tprod, packet, ISCONS);
         ft_thread_unlink();
     }
 
 }
 
 
-//=============Main================
+// **************   Main Program *************************
 
 int main()
 {
 
-    // Les tapis initialisés
-    Tapis tapis_prod;
-    Tapis tapis_cons;
-    tapis_cons.cap = TAILLE_MAX;       
-    tapis_cons.nbrElement = 0;
-    tapis_prod.cap = TAILLE_MAX;       
-    tapis_prod.nbrElement = 0;
+    // Initialisation of the configuration ***********************
 
-    //schedulers
-    ft_scheduler_t cp_sched = ft_scheduler_create();
-    ft_scheduler_t tcons_sched = ft_scheduler_create();
-    ft_scheduler_t tprod_sched = ft_scheduler_create();
+    Tapis carpetProd;
+    Tapis carpetCons;
+    carpetCons.cap = TAILLE_MAX;       
+    carpetCons.nbrElement = 0;
+    carpetProd.cap = TAILLE_MAX;       
+    carpetProd.nbrElement = 0;
 
-    //events
-    consFinished = ft_event_create(cp_sched);
-    consNotEmpty = ft_event_create(tcons_sched);
-    consNotFull = ft_event_create(tcons_sched);
-    prodNotEmpty = ft_event_create(tprod_sched);
-    prodNotFull = ft_event_create(tprod_sched);
+    ft_scheduler_t cpSched = ft_scheduler_create();
+    ft_scheduler_t consSched = ft_scheduler_create();
+    ft_scheduler_t prodSched = ft_scheduler_create();
 
-    //log files
-    FILE* clog = fopen("ConsoLog.txt","a+");
-    FILE* plog = fopen("ProdLog.txt","a+");
-    FILE* mlog = fopen("MessLog.txt","a+");
+    consFinished = ft_event_create(cpSched);
+    consNotEmpty = ft_event_create(consSched);
+    consNotFull = ft_event_create(consSched);
+    prodNotEmpty = ft_event_create(prodSched);
+    prodNotFull = ft_event_create(prodSched);
 
-    //routine args init
-    ProdArgs pargs;
-    pargs.tapis = &tapis_prod;
-    pargs.cibleProd = 3;
-    strcpy(pargs.nom, "pomme");
-    pargs.prodLog = plog;
+    FILE* consLog = fopen("consLog.txt","a+");
+    FILE* prodLog = fopen("prodLog.txt","a+");
+    FILE* msgLog = fopen("msgLog.txt","a+");
 
-    ConsoArgs cargs;
-    cargs.tapis = &tapis_cons;
-    cargs.ConsoLog = clog;
+    Prod prodArg;
+    prodArg.tapis = &carpetProd;
+    prodArg.cibleProd = 3;
+    strcpy(prodArg.nom, "pomme");
+    prodArg.prodLog = prodLog;
 
-    MessArgs margs;
-    margs.tapisC = &tapis_cons;
-    margs.tapisP = &tapis_prod;
-    margs.tcons_sched = tcons_sched;
-    margs.tprod_sched = tprod_sched;
-    margs.MessLog = mlog;
+    Cons consArg;
+    consArg.tapis = &carpetCons;
+    consArg.ConsoLog = consLog;
 
-    //Lancement thread producteurs
+    Msg msgArg;
+    msgArg.tapisProd = &carpetProd;
+    msgArg.tapisCons = &carpetCons;
+    msgArg.consSched = consSched;
+    msgArg.prodSched = prodSched;
+    msgArg.msgLog = msgLog;
 
     int i;
+
+    // launching threads
     for (i = 0; i < NBPROD; i++)
     {
-        strcpy(pargs.nom, "pomme");
-        ft_thread_create(tprod_sched,producteur, NULL,&pargs);
+        strcpy(prodArg.nom, "pomme");
+        ft_thread_create(prodSched,producteur, NULL,&prodArg);
     }
 
     for (i = 0; i < NBCONS; i++)
     {
-        cargs.id = i;
-        ft_thread_create(tcons_sched,consommateur, NULL,&cargs);
+        consArg.id = i;
+        ft_thread_create(consSched,consommateur, NULL,&consArg);
     }
 
     for (i = 0; i < MSG; i++)
     {
-        ft_thread_create(NULL,messager, NULL,&margs);
+        ft_thread_create(NULL,messager, NULL,&msgArg);
     }
 
-    while(compteur>0){      
+    while(cp>0){      
         ft_await(consFinished);
     }
 
     printf("END\n");
     
 }
-
